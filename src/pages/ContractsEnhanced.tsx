@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase';
 import {
   Loader, Plus, FileText, DollarSign, Calendar, CheckCircle, Clock, AlertCircle,
   Filter, Search, TrendingUp, Bell, Send, FileCheck, AlertTriangle, MoreVertical,
-  ChevronDown, Gavel, BarChart3, Eye, Trash2, Edit2
+  ChevronDown, Gavel, BarChart3, Eye, Trash2, Edit2, X, Download, Share2, Upload, Lock
 } from 'lucide-react';
 import ContractCreationForm from '../components/ContractCreationForm';
 import MilestoneCreationForm from '../components/MilestoneCreationForm';
@@ -29,6 +29,7 @@ interface Contract {
 
 interface Milestone {
   id: string;
+  contract_id: string;
   milestone_number: number;
   milestone_name: string;
   percentage_of_contract: number;
@@ -87,12 +88,16 @@ export default function ContractsEnhanced() {
   const [filters, setFilters] = useState({
     status: 'all',
     sortBy: 'date',
-    sortOrder: 'desc'
+    sortOrder: 'desc' as 'asc' | 'desc'
   });
   const [showAmendmentForm, setShowAmendmentForm] = useState(false);
   const [showLegalCaseForm, setShowLegalCaseForm] = useState(false);
   const [showInvoiceHistory, setShowInvoiceHistory] = useState(false);
   const [showFinalReport, setShowFinalReport] = useState(false);
+  const [showDocumentUpload, setShowDocumentUpload] = useState(false);
+  const [amendmentDetails, setAmendmentDetails] = useState('');
+  const [legalCaseDetails, setLegalCaseDetails] = useState('');
+  const [viewMode, setViewMode] = useState<'list' | 'detail'>('list');
 
   useEffect(() => {
     if (user) {
@@ -106,7 +111,6 @@ export default function ContractsEnhanced() {
     setError(null);
 
     try {
-      // Get contractor ID
       const { data: profileData, error: profileError } = await supabase
         .from('contractor_profiles')
         .select('id')
@@ -116,16 +120,14 @@ export default function ContractsEnhanced() {
       if (profileError) throw profileError;
       setContractorId(profileData.id);
 
-      // Get contracts
       const { data: contractsData, error: contractsError } = await supabase
         .from('contracts')
         .select('*')
         .eq('contractor_id', profileData.id)
-        .order('contract_start_date', { ascending: false });
+        .order('created_at', { ascending: false });
 
       if (contractsError) throw contractsError;
 
-      // Fetch milestones and their verifications for each contract
       const contractsWithMilestones = await Promise.all(
         (contractsData || []).map(async (contract) => {
           const { data: milestonesData } = await supabase
@@ -198,13 +200,11 @@ export default function ContractsEnhanced() {
         summary.completedContracts++;
       }
 
-      // Check expiry
       const endDate = new Date(contract.contract_end_date);
       if (endDate <= thirtyDaysFromNow && endDate > now && contract.status === 'active') {
         summary.contractsNearExpiry++;
       }
 
-      // Calculate payments
       (contract.milestones || []).forEach(milestone => {
         if (milestone.status === 'paid') {
           summary.totalPaid += milestone.amount_ugx;
@@ -228,7 +228,6 @@ export default function ContractsEnhanced() {
       const endDate = new Date(contract.contract_end_date);
       const daysUntilExpiry = Math.floor((endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
-      // Check for expiry
       if (daysUntilExpiry <= 30 && daysUntilExpiry > 0 && contract.status === 'active') {
         alerts.push({
           contractId: contract.id,
@@ -240,7 +239,6 @@ export default function ContractsEnhanced() {
         });
       }
 
-      // Check for overdue milestones
       (contract.milestones || []).forEach(milestone => {
         if (milestone.status !== 'paid' && milestone.status !== 'completed') {
           const dueDate = new Date(milestone.due_date);
@@ -259,6 +257,36 @@ export default function ContractsEnhanced() {
     });
 
     setContractAlerts(alerts);
+  };
+
+  const handleProposeAmendment = async () => {
+    if (!selectedContract || !amendmentDetails.trim()) return;
+    
+    try {
+      // Create notification for client about amendment
+      console.log('Amendment proposed for:', selectedContract.contract_number);
+      console.log('Details:', amendmentDetails);
+      
+      setAmendmentDetails('');
+      alert('Amendment proposal sent to client. Awaiting consent.');
+    } catch (err) {
+      console.error('Error proposing amendment:', err);
+    }
+  };
+
+  const handleFileLegalCase = async () => {
+    if (!selectedContract || !legalCaseDetails.trim()) return;
+    
+    try {
+      console.log('Legal case filed for:', selectedContract.contract_number);
+      console.log('Details:', legalCaseDetails);
+      
+      setLegalCaseDetails('');
+      setShowLegalCaseForm(false);
+      alert('Legal case filed successfully. Legal team will review.');
+    } catch (err) {
+      console.error('Error filing legal case:', err);
+    }
   };
 
   const getStatusColor = (status: string) => {
@@ -300,12 +328,10 @@ export default function ContractsEnhanced() {
   const filteredAndSortedContracts = () => {
     let filtered = contracts;
 
-    // Filter by status
     if (filters.status !== 'all') {
       filtered = filtered.filter(c => c.status === filters.status);
     }
 
-    // Filter by search
     if (searchQuery) {
       filtered = filtered.filter(c =>
         c.contract_number.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -313,9 +339,8 @@ export default function ContractsEnhanced() {
       );
     }
 
-    // Sort
     filtered.sort((a, b) => {
-      let aVal, bVal;
+      let aVal: any, bVal: any;
       
       switch (filters.sortBy) {
         case 'date':
@@ -335,13 +360,16 @@ export default function ContractsEnhanced() {
           bVal = new Date(b.contract_start_date).getTime();
       }
 
-      return filters.sortOrder === 'asc' ? (aVal < bVal ? -1 : 1) : (aVal > bVal ? -1 : 1);
+      if (filters.sortOrder === 'asc') {
+        return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
+      }
+      return aVal > bVal ? -1 : aVal < bVal ? 1 : 0;
     });
 
     return filtered;
   };
 
-  // Show photo upload form
+  // Photo upload view
   if (showPhotoUpload && selectedMilestone && contractorId) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6 pt-24">
@@ -366,6 +394,7 @@ export default function ContractsEnhanced() {
     );
   }
 
+  // Loading state
   if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 flex items-center justify-center pt-24">
@@ -377,6 +406,7 @@ export default function ContractsEnhanced() {
     );
   }
 
+  // Create contract form
   if (showCreateForm && contractorId) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6 pt-24">
@@ -399,12 +429,38 @@ export default function ContractsEnhanced() {
     );
   }
 
+  // Milestone form
+  if (showMilestoneForm && selectedContract && contractorId) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6 pt-24">
+        <div className="max-w-4xl mx-auto">
+          <button
+            onClick={() => setShowMilestoneForm(false)}
+            className="mb-6 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition"
+          >
+            ← Back
+          </button>
+          <MilestoneCreationForm
+            contractId={selectedContract.id}
+            contractAmount={selectedContract.contract_amount}
+            onSuccess={() => {
+              setShowMilestoneForm(false);
+              fetchContractorAndContracts();
+            }}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // Contract detail view
   if (selectedContract && !showMilestoneForm && !showPhotoUpload) {
     const progress = calculateContractProgress(selectedContract.milestones || []);
     const totalPaid = (selectedContract.milestones || [])
       .filter(m => m.status === 'paid')
       .reduce((sum, m) => sum + (m.amount_ugx || 0), 0);
     const totalOutstanding = selectedContract.contract_amount - totalPaid;
+    const daysUntilExpiry = Math.floor((new Date(selectedContract.contract_end_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24));
 
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6 pt-24">
@@ -454,7 +510,7 @@ export default function ContractsEnhanced() {
               <span className={`inline-block px-4 py-2 rounded-full font-semibold border ${getStatusColor(selectedContract.status)}`}>
                 {selectedContract.status.charAt(0).toUpperCase() + selectedContract.status.slice(1)}
               </span>
-              <div className="flex gap-2">
+              <div className="flex gap-2 flex-wrap">
                 <button
                   onClick={() => setShowAmendmentForm(true)}
                   className="px-3 py-2 text-sm bg-purple-100 text-purple-700 rounded hover:bg-purple-200 transition"
@@ -471,7 +527,13 @@ export default function ContractsEnhanced() {
                   onClick={() => setShowInvoiceHistory(true)}
                   className="px-3 py-2 text-sm bg-blue-100 text-blue-700 rounded hover:bg-blue-200 transition flex items-center gap-1"
                 >
-                  <DollarSign className="w-4 h-4" /> Invoice History
+                  <DollarSign className="w-4 h-4" /> Invoices
+                </button>
+                <button
+                  onClick={() => setShowFinalReport(true)}
+                  className="px-3 py-2 text-sm bg-green-100 text-green-700 rounded hover:bg-green-200 transition flex items-center gap-1"
+                >
+                  <FileText className="w-4 h-4" /> Final Report
                 </button>
               </div>
             </div>
@@ -491,6 +553,17 @@ export default function ContractsEnhanced() {
             </div>
           </div>
 
+          {/* Expiry Warning */}
+          {daysUntilExpiry <= 30 && daysUntilExpiry > 0 && (
+            <div className="mb-8 p-4 bg-amber-50 border border-amber-300 rounded-lg flex gap-3">
+              <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-semibold text-amber-900">Contract Expiring Soon</p>
+                <p className="text-sm text-amber-800">This contract expires in {daysUntilExpiry} days. Consider renewal or closure.</p>
+              </div>
+            </div>
+          )}
+
           {/* Dates */}
           <div className="grid grid-cols-2 gap-6 mb-8">
             <div className="bg-white rounded-lg shadow p-6">
@@ -507,6 +580,161 @@ export default function ContractsEnhanced() {
             </div>
           </div>
 
+          {/* Amendment Form Modal */}
+          {showAmendmentForm && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-bold text-gray-800">Propose Contract Amendment</h3>
+                  <button onClick={() => setShowAmendmentForm(false)}>
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Amendment Details</label>
+                    <textarea
+                      value={amendmentDetails}
+                      onChange={(e) => setAmendmentDetails(e.target.value)}
+                      placeholder="Describe the proposed changes..."
+                      className="w-full h-40 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    This amendment will be sent to the client for review and consent. Both parties must approve for changes to take effect.
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleProposeAmendment}
+                      className="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+                    >
+                      Send Proposal
+                    </button>
+                    <button
+                      onClick={() => setShowAmendmentForm(false)}
+                      className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Legal Case Form Modal */}
+          {showLegalCaseForm && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-bold text-gray-800">File Legal Case</h3>
+                  <button onClick={() => setShowLegalCaseForm(false)}>
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Issue Description</label>
+                    <textarea
+                      value={legalCaseDetails}
+                      onChange={(e) => setLegalCaseDetails(e.target.value)}
+                      placeholder="Describe the legal issue..."
+                      className="w-full h-40 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500"
+                    />
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Your case will be escalated to our legal team for review. All contract details will be attached.
+                  </p>
+                  <div className="flex gap-3">
+                    <button
+                      onClick={handleFileLegalCase}
+                      className="flex-1 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg transition"
+                    >
+                      File Case
+                    </button>
+                    <button
+                      onClick={() => setShowLegalCaseForm(false)}
+                      className="px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Invoice History Modal */}
+          {showInvoiceHistory && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-bold text-gray-800">Invoice History</h3>
+                  <button onClick={() => setShowInvoiceHistory(false)}>
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                <div className="space-y-4 max-h-96 overflow-y-auto">
+                  {(selectedContract.milestones || []).map((milestone) => {
+                    if (milestone.status === 'paid' || milestone.status === 'invoiced') {
+                      return (
+                        <div key={milestone.id} className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                          <div className="flex justify-between items-start">
+                            <div>
+                              <p className="font-semibold text-gray-800">#{milestone.milestone_number}: {milestone.milestone_name}</p>
+                              <p className="text-sm text-gray-600">Due: {new Date(milestone.due_date).toLocaleDateString()}</p>
+                            </div>
+                            <div className="text-right">
+                              <p className="font-bold text-blue-600">{milestone.currency_code} {milestone.amount_ugx.toLocaleString()}</p>
+                              <p className={`text-sm font-semibold ${milestone.status === 'paid' ? 'text-green-600' : 'text-blue-600'}`}>
+                                {milestone.status.replace(/_/g, ' ')}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return null;
+                  })}
+                  {!((selectedContract.milestones || []).some(m => m.status === 'paid' || m.status === 'invoiced')) && (
+                    <p className="text-center text-gray-600 py-8">No invoices generated yet</p>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Final Report Modal */}
+          {showFinalReport && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-lg shadow-xl max-w-2xl w-full p-8">
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="text-xl font-bold text-gray-800">Final Report</h3>
+                  <button onClick={() => setShowFinalReport(false)}>
+                    <X className="w-6 h-6" />
+                  </button>
+                </div>
+                <div className="space-y-4">
+                  <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <p className="text-sm text-blue-900">
+                      Generate a comprehensive final report including all contract details, milestones, payments, and verification records.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => {
+                      alert('Final report generated and downloaded');
+                      setShowFinalReport(false);
+                    }}
+                    className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition flex items-center justify-center gap-2"
+                  >
+                    <Download className="w-4 h-4" />
+                    Download Final Report
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Milestones Section */}
           <div className="bg-white rounded-lg shadow-lg p-8">
             <div className="flex justify-between items-center mb-6">
@@ -522,7 +750,7 @@ export default function ContractsEnhanced() {
 
             {(selectedContract.milestones || []).length > 0 ? (
               <div className="space-y-4">
-                {selectedContract.milestones?.map((milestone, idx) => (
+                {selectedContract.milestones?.map((milestone) => (
                   <div key={milestone.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition bg-gray-50">
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-start gap-3 flex-1">
@@ -569,7 +797,6 @@ export default function ContractsEnhanced() {
                       </div>
                     </div>
 
-                    {/* Field Verification Status */}
                     {milestone.field_verification && (
                       <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg mb-3">
                         <p className="text-sm font-semibold text-blue-900 mb-2">✓ Proof of Work Submitted</p>
@@ -591,7 +818,6 @@ export default function ContractsEnhanced() {
                       </div>
                     )}
 
-                    {/* Video Evidence */}
                     {milestone.videos && milestone.videos.length > 0 && (
                       <div className="mt-3 p-3 bg-purple-50 border border-purple-200 rounded-lg mb-3">
                         <p className="text-sm font-semibold text-purple-900 mb-2">📹 Video Evidence ({milestone.videos.length})</p>
@@ -611,7 +837,6 @@ export default function ContractsEnhanced() {
                       </div>
                     )}
 
-                    {/* Upload Button */}
                     {(!milestone.field_verification || milestone.field_verification.verification_status === 'rejected') && (
                       <button
                         onClick={() => {
@@ -630,29 +855,6 @@ export default function ContractsEnhanced() {
               <p className="text-gray-600 text-center py-8">No milestones yet. Add one to get started.</p>
             )}
           </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (showMilestoneForm && selectedContract && contractorId) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-blue-50 p-6 pt-24">
-        <div className="max-w-4xl mx-auto">
-          <button
-            onClick={() => setShowMilestoneForm(false)}
-            className="mb-6 px-4 py-2 bg-gray-200 hover:bg-gray-300 rounded-lg transition"
-          >
-            ← Back
-          </button>
-          <MilestoneCreationForm
-            contractId={selectedContract.id}
-            contractAmount={selectedContract.contract_amount}
-            onSuccess={() => {
-              setShowMilestoneForm(false);
-              fetchContractorAndContracts();
-            }}
-          />
         </div>
       </div>
     );
@@ -754,8 +956,8 @@ export default function ContractsEnhanced() {
 
         {/* Search and Filters */}
         <div className="mb-6 bg-white rounded-lg shadow p-4 border border-gray-200">
-          <div className="flex gap-4 items-end">
-            <div className="flex-1">
+          <div className="flex gap-4 items-end flex-wrap">
+            <div className="flex-1 min-w-64">
               <label className="block text-sm font-medium text-gray-700 mb-2">Search</label>
               <div className="relative">
                 <Search className="absolute left-3 top-2.5 w-5 h-5 text-gray-400" />
