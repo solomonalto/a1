@@ -5,7 +5,8 @@ import { supabase } from '../lib/supabase';
 import {
   Clock, CheckCircle, AlertCircle, Loader, MessageCircle, TrendingUp,
   Calendar, DollarSign, User, Trophy, Zap, Film, Image, FileText, AlertTriangle,
-  ChevronDown, Plus, X, Eye, Download, Share2, GripVertical, Timer
+  ChevronDown, Plus, X, Eye, Download, Share2, GripVertical, Timer, Bell,
+  ListTodo, Users, MapPin, Send, Trash2, Edit2, CheckSquare, Square
 } from 'lucide-react';
 import ProjectMilestoneVideoUpload from '../components/ProjectMilestoneVideoUpload';
 import ProjectTeamChat from '../components/ProjectTeamChat';
@@ -30,10 +31,31 @@ interface ProjectTask {
   title: string;
   description?: string;
   assigned_to: string;
+  assigned_to_name?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'blocked';
   due_date?: string;
   priority: 'low' | 'medium' | 'high';
   completion_percentage: number;
+}
+
+interface CalendarEvent {
+  id: string;
+  title: string;
+  date: string;
+  time: string;
+  description?: string;
+  location?: string;
+  type: 'meeting' | 'deadline' | 'milestone' | 'review';
+  contract_id?: string;
+  completed?: boolean;
+}
+
+interface MilestoneReminder {
+  milestone_id: string;
+  milestone_name: string;
+  due_date: string;
+  days_until_due: number;
+  status: string;
 }
 
 export default function ProjectsEnhanced() {
@@ -46,6 +68,9 @@ export default function ProjectsEnhanced() {
   const [showProofOfWorkModal, setShowProofOfWorkModal] = useState(false);
   const [showSOPGallery, setShowSOPGallery] = useState(false);
   const [showCalendar, setShowCalendar] = useState(false);
+  const [showTasks, setShowTasks] = useState(false);
+  const [showTaskForm, setShowTaskForm] = useState(false);
+  const [showReminders, setShowReminders] = useState(false);
   const [chatContractId, setChatContractId] = useState<string>('');
   const [chatContractNumber, setChatContractNumber] = useState<string>('');
   const [selectedMilestoneForProof, setSelectedMilestoneForProof] = useState<{
@@ -56,6 +81,11 @@ export default function ProjectsEnhanced() {
   } | null>(null);
   const [sopEvidence, setSOPEvidence] = useState<ProjectSOPEvidence[]>([]);
   const [selectedSOPView, setSelectedSOPView] = useState<'grid' | 'timeline'>('grid');
+  const [projectTasks, setProjectTasks] = useState<ProjectTask[]>([]);
+  const [calendarEvents, setCalendarEvents] = useState<CalendarEvent[]>([]);
+  const [milestoneReminders, setMilestoneReminders] = useState<MilestoneReminder[]>([]);
+  const [newTaskTitle, setNewTaskTitle] = useState('');
+  const [newTaskAssignee, setNewTaskAssignee] = useState('');
 
   if (!user) {
     return <div className="min-h-screen flex items-center justify-center text-slate-600 pt-24">Please sign in</div>;
@@ -88,16 +118,25 @@ export default function ProjectsEnhanced() {
     });
   };
 
+  const formatDateTime = (date: string, time?: string) => {
+    const d = new Date(date);
+    return d.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: time ? undefined : '2-digit',
+      minute: time ? undefined : '2-digit'
+    });
+  };
+
   const loadSOPEvidence = async (contractId: string) => {
     try {
-      // Fetch from project_milestone_videos
       const { data: videos } = await supabase
         .from('project_milestone_videos')
         .select('*')
         .eq('contract_id', contractId)
         .order('created_at', { ascending: false });
 
-      // Fetch from field_verification (photos)
       const { data: photos } = await supabase
         .from('field_verification')
         .select('*')
@@ -134,6 +173,370 @@ export default function ProjectsEnhanced() {
     } catch (err) {
       console.error('Failed to load SOP evidence:', err);
     }
+  };
+
+  const loadMilestoneReminders = (project: OngoingProject) => {
+    const now = new Date();
+    const reminders: MilestoneReminder[] = (project.milestones || []).map(milestone => {
+      const dueDate = new Date(milestone.due_date);
+      const daysUntilDue = Math.floor((dueDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+      
+      return {
+        milestone_id: milestone.id,
+        milestone_name: milestone.milestone_name,
+        due_date: milestone.due_date,
+        days_until_due: daysUntilDue,
+        status: milestone.status
+      };
+    });
+    
+    setMilestoneReminders(reminders.sort((a, b) => a.days_until_due - b.days_until_due));
+  };
+
+  const generateCalendarEvents = (project: OngoingProject): CalendarEvent[] => {
+    const events: CalendarEvent[] = [];
+    
+    (project.milestones || []).forEach((milestone, idx) => {
+      events.push({
+        id: `milestone-${milestone.id}`,
+        title: `Milestone: ${milestone.milestone_name}`,
+        date: milestone.due_date,
+        time: '09:00',
+        type: 'milestone',
+        contract_id: project.id,
+        description: milestone.description,
+        completed: milestone.status === 'paid' || milestone.status === 'completed'
+      });
+    });
+    
+    return events;
+  };
+
+  // Task Management Modal
+  const TaskManagementModal = ({ project }: { project: OngoingProject | CompletedProject }) => {
+    const [tasks, setTasks] = useState<ProjectTask[]>([
+      {
+        id: '1',
+        milestone_id: project.milestones[0]?.id || '',
+        title: 'Prepare project scope document',
+        assigned_to: user?.id || '',
+        assigned_to_name: user?.email,
+        status: 'completed',
+        priority: 'high',
+        completion_percentage: 100
+      },
+      {
+        id: '2',
+        milestone_id: project.milestones[0]?.id || '',
+        title: 'Coordinate with team members',
+        assigned_to: '',
+        status: 'in_progress',
+        priority: 'high',
+        completion_percentage: 65
+      },
+      {
+        id: '3',
+        milestone_id: project.milestones[0]?.id || '',
+        title: 'Submit initial documentation',
+        assigned_to: '',
+        status: 'pending',
+        priority: 'medium',
+        completion_percentage: 0
+      }
+    ]);
+
+    const toggleTaskStatus = (taskId: string) => {
+      setTasks(tasks.map(task => 
+        task.id === taskId 
+          ? { ...task, status: task.status === 'completed' ? 'pending' : 'completed', completion_percentage: task.status === 'completed' ? 0 : 100 }
+          : task
+      ));
+    };
+
+    const getPriorityColor = (priority: string) => {
+      switch (priority) {
+        case 'high': return 'bg-red-100 text-red-800';
+        case 'medium': return 'bg-yellow-100 text-yellow-800';
+        case 'low': return 'bg-green-100 text-green-800';
+        default: return 'bg-gray-100 text-gray-800';
+      }
+    };
+
+    const getStatusColor = (status: string) => {
+      switch (status) {
+        case 'completed': return 'text-green-600';
+        case 'in_progress': return 'text-blue-600';
+        case 'blocked': return 'text-red-600';
+        default: return 'text-gray-600';
+      }
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto pt-24">
+        <div className="max-w-4xl mx-auto p-6">
+          <div className="bg-white rounded-lg shadow-xl">
+            {/* Header */}
+            <div className="flex justify-between items-center p-6 border-b border-slate-200">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Task Management</h2>
+                <p className="text-slate-600 text-sm mt-1">{project.client_name}</p>
+              </div>
+              <button
+                onClick={() => setShowTasks(false)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition"
+              >
+                <X className="w-6 h-6 text-slate-600" />
+              </button>
+            </div>
+
+            {/* Add Task */}
+            <div className="p-6 border-b border-slate-200 bg-slate-50">
+              <div className="flex gap-3">
+                <input
+                  type="text"
+                  placeholder="Add new task..."
+                  value={newTaskTitle}
+                  onChange={(e) => setNewTaskTitle(e.target.value)}
+                  className="flex-1 px-4 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <button
+                  onClick={() => {
+                    if (newTaskTitle.trim()) {
+                      setTasks([
+                        ...tasks,
+                        {
+                          id: Date.now().toString(),
+                          milestone_id: project.milestones[0]?.id || '',
+                          title: newTaskTitle,
+                          assigned_to: newTaskAssignee || user?.id || '',
+                          status: 'pending',
+                          priority: 'medium',
+                          completion_percentage: 0
+                        }
+                      ]);
+                      setNewTaskTitle('');
+                      setNewTaskAssignee('');
+                    }
+                  }}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition flex items-center gap-2"
+                >
+                  <Plus className="w-4 h-4" />
+                  Add
+                </button>
+              </div>
+            </div>
+
+            {/* Tasks List */}
+            <div className="p-6 space-y-3 max-h-96 overflow-y-auto">
+              {tasks.length === 0 ? (
+                <p className="text-center text-slate-600 py-8">No tasks yet. Create one to get started.</p>
+              ) : (
+                tasks.map(task => (
+                  <div key={task.id} className="p-4 border border-slate-200 rounded-lg hover:shadow-md transition">
+                    <div className="flex items-start gap-3">
+                      <button
+                        onClick={() => toggleTaskStatus(task.id)}
+                        className={`mt-1 flex-shrink-0 ${task.status === 'completed' ? 'text-green-600' : 'text-slate-400'}`}
+                      >
+                        {task.status === 'completed' ? (
+                          <CheckSquare className="w-5 h-5" />
+                        ) : (
+                          <Square className="w-5 h-5" />
+                        )}
+                      </button>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-1">
+                          <h4 className={`font-semibold ${task.status === 'completed' ? 'line-through text-slate-500' : 'text-slate-900'}`}>
+                            {task.title}
+                          </h4>
+                          <span className={`text-xs font-semibold px-2 py-1 rounded ${getPriorityColor(task.priority)}`}>
+                            {task.priority}
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-4 text-xs text-slate-600">
+                          <span className={`font-medium ${getStatusColor(task.status)}`}>
+                            {task.status.replace(/_/g, ' ')}
+                          </span>
+                          {task.assigned_to_name && (
+                            <div className="flex items-center gap-1">
+                              <User className="w-3 h-3" />
+                              <span>{task.assigned_to_name}</span>
+                            </div>
+                          )}
+                        </div>
+                        {task.completion_percentage > 0 && (
+                          <div className="mt-2 w-full bg-slate-200 rounded-full h-1.5">
+                            <div
+                              className="bg-blue-600 h-1.5 rounded-full"
+                              style={{ width: `${task.completion_percentage}%` }}
+                            ></div>
+                          </div>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setTasks(tasks.filter(t => t.id !== task.id))}
+                        className="p-1 hover:bg-red-100 rounded transition text-slate-600 hover:text-red-600"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Calendar Modal
+  const CalendarModal = ({ project }: { project: OngoingProject | CompletedProject }) => {
+    const events = generateCalendarEvents(project as OngoingProject);
+    const currentMonth = new Date();
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto pt-24">
+        <div className="max-w-4xl mx-auto p-6">
+          <div className="bg-white rounded-lg shadow-xl">
+            {/* Header */}
+            <div className="flex justify-between items-center p-6 border-b border-slate-200">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Project Calendar</h2>
+                <p className="text-slate-600 text-sm mt-1">Milestones and important dates</p>
+              </div>
+              <button
+                onClick={() => setShowCalendar(false)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition"
+              >
+                <X className="w-6 h-6 text-slate-600" />
+              </button>
+            </div>
+
+            {/* Calendar Events */}
+            <div className="p-6">
+              <h3 className="font-semibold text-slate-900 mb-4 flex items-center gap-2">
+                <Calendar className="w-5 h-5 text-blue-600" />
+                Upcoming Events
+              </h3>
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {events.length === 0 ? (
+                  <p className="text-slate-600 text-center py-8">No events scheduled</p>
+                ) : (
+                  events.map(event => (
+                    <div key={event.id} className={`p-4 border rounded-lg ${event.completed ? 'border-green-200 bg-green-50' : 'border-slate-200'}`}>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <h4 className={`font-semibold ${event.completed ? 'line-through text-slate-500' : 'text-slate-900'}`}>
+                              {event.title}
+                            </h4>
+                            <span className="text-xs px-2 py-1 rounded bg-blue-100 text-blue-800">
+                              {event.type}
+                            </span>
+                          </div>
+                          {event.description && (
+                            <p className="text-sm text-slate-600 mb-2">{event.description}</p>
+                          )}
+                          <div className="flex items-center gap-4 text-xs text-slate-600">
+                            <div className="flex items-center gap-1">
+                              <Calendar className="w-3 h-3" />
+                              <span>{formatDate(event.date)}</span>
+                            </div>
+                            {event.location && (
+                              <div className="flex items-center gap-1">
+                                <MapPin className="w-3 h-3" />
+                                <span>{event.location}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        {event.completed ? (
+                          <CheckCircle className="w-5 h-5 text-green-600 flex-shrink-0" />
+                        ) : (
+                          <Clock className="w-5 h-5 text-blue-600 flex-shrink-0" />
+                        )}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // Reminders Modal
+  const RemindersModal = ({ project }: { project: OngoingProject | CompletedProject }) => {
+    loadMilestoneReminders(project as OngoingProject);
+
+    const getUrgency = (daysUntilDue: number) => {
+      if (daysUntilDue < 0) return { color: 'bg-red-100 border-red-300', text: 'text-red-800', label: 'Overdue' };
+      if (daysUntilDue <= 7) return { color: 'bg-red-100 border-red-300', text: 'text-red-800', label: 'Urgent' };
+      if (daysUntilDue <= 14) return { color: 'bg-yellow-100 border-yellow-300', text: 'text-yellow-800', label: 'Warning' };
+      return { color: 'bg-blue-100 border-blue-300', text: 'text-blue-800', label: 'On track' };
+    };
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 overflow-y-auto pt-24">
+        <div className="max-w-2xl mx-auto p-6">
+          <div className="bg-white rounded-lg shadow-xl">
+            {/* Header */}
+            <div className="flex justify-between items-center p-6 border-b border-slate-200">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-900">Milestone Reminders</h2>
+                <p className="text-slate-600 text-sm mt-1">Stay on track with upcoming deadlines</p>
+              </div>
+              <button
+                onClick={() => setShowReminders(false)}
+                className="p-2 hover:bg-slate-100 rounded-lg transition"
+              >
+                <X className="w-6 h-6 text-slate-600" />
+              </button>
+            </div>
+
+            {/* Reminders List */}
+            <div className="p-6 space-y-3 max-h-96 overflow-y-auto">
+              {milestoneReminders.length === 0 ? (
+                <p className="text-center text-slate-600 py-8">No milestones to remind about</p>
+              ) : (
+                milestoneReminders.map(reminder => {
+                  const urgency = getUrgency(reminder.days_until_due);
+                  return (
+                    <div key={reminder.milestone_id} className={`p-4 border rounded-lg ${urgency.color} ${urgency.text}`}>
+                      <div className="flex items-start justify-between">
+                        <div className="flex-1">
+                          <h4 className="font-semibold mb-1">{reminder.milestone_name}</h4>
+                          <div className="flex items-center gap-4 text-sm">
+                            <div className="flex items-center gap-1">
+                              <Calendar className="w-4 h-4" />
+                              <span>{formatDate(reminder.due_date)}</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <Timer className="w-4 h-4" />
+                              <span>
+                                {reminder.days_until_due < 0
+                                  ? `${Math.abs(reminder.days_until_due)} days overdue`
+                                  : reminder.days_until_due === 0
+                                  ? 'Due today'
+                                  : `${reminder.days_until_due} days remaining`}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <Bell className="w-5 h-5 flex-shrink-0" />
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   // Ongoing Projects Tab
@@ -272,7 +675,7 @@ export default function ProjectsEnhanced() {
             </div>
 
             {/* Quick Actions */}
-            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 grid grid-cols-4 gap-2">
+            <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 grid grid-cols-5 gap-2">
               <button
                 onClick={() => {
                   loadSOPEvidence(project.id);
@@ -283,15 +686,41 @@ export default function ProjectsEnhanced() {
                 title="View SOP Evidence & Accountability Gallery"
               >
                 <Image className="w-4 h-4" />
-                <span className="hidden sm:inline">Gallery</span>
+                <span className="hidden sm:inline text-xs">Gallery</span>
               </button>
               <button
-                onClick={() => setShowCalendar(true)}
+                onClick={() => {
+                  setSelectedProject(project);
+                  loadMilestoneReminders(project);
+                  setShowReminders(true);
+                }}
+                className="flex items-center justify-center gap-2 px-3 py-2 bg-red-100 hover:bg-red-200 text-red-700 rounded-lg transition font-medium text-sm"
+                title="Milestone Reminders"
+              >
+                <Bell className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Reminders</span>
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedProject(project);
+                  setShowTasks(true);
+                }}
                 className="flex items-center justify-center gap-2 px-3 py-2 bg-green-100 hover:bg-green-200 text-green-700 rounded-lg transition font-medium text-sm"
-                title="View Project Calendar"
+                title="Task Checklist"
+              >
+                <ListTodo className="w-4 h-4" />
+                <span className="hidden sm:inline text-xs">Tasks</span>
+              </button>
+              <button
+                onClick={() => {
+                  setSelectedProject(project);
+                  setShowCalendar(true);
+                }}
+                className="flex items-center justify-center gap-2 px-3 py-2 bg-indigo-100 hover:bg-indigo-200 text-indigo-700 rounded-lg transition font-medium text-sm"
+                title="Project Calendar"
               >
                 <Calendar className="w-4 h-4" />
-                <span className="hidden sm:inline">Calendar</span>
+                <span className="hidden sm:inline text-xs">Calendar</span>
               </button>
               <button
                 onClick={() => {
@@ -303,14 +732,7 @@ export default function ProjectsEnhanced() {
                 title="Team Chat"
               >
                 <MessageCircle className="w-4 h-4" />
-                <span className="hidden sm:inline">Chat</span>
-              </button>
-              <button
-                className="flex items-center justify-center gap-2 px-3 py-2 bg-amber-100 hover:bg-amber-200 text-amber-700 rounded-lg transition font-medium text-sm"
-                title="View Reports"
-              >
-                <BarChart3 className="w-4 h-4" />
-                <span className="hidden sm:inline">Reports</span>
+                <span className="hidden sm:inline text-xs">Chat</span>
               </button>
             </div>
           </div>
@@ -407,7 +829,7 @@ export default function ProjectsEnhanced() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  {sopEvidence.map((item, idx) => (
+                  {sopEvidence.map((item) => (
                     <div key={item.id} className="flex gap-4 pb-4 border-b border-slate-200 last:border-0">
                       <div className="w-20 h-20 bg-slate-200 rounded-lg overflow-hidden flex-shrink-0">
                         {item.type === 'video' ? (
@@ -479,7 +901,7 @@ export default function ProjectsEnhanced() {
         milestoneNumber={selectedMilestoneForProof.milestoneNumber}
         milestoneName={selectedMilestoneForProof.milestoneName}
         userId={user?.id || ''}
-        userName={user?.name || 'User'}
+        userName={user?.email || 'User'}
         onSuccess={async () => {
           setShowProofOfWorkModal(false);
           setSelectedMilestoneForProof(null);
@@ -491,6 +913,21 @@ export default function ProjectsEnhanced() {
         }}
       />
     );
+  }
+
+  // Task Management Modal
+  if (showTasks && selectedProject) {
+    return <TaskManagementModal project={selectedProject} />;
+  }
+
+  // Calendar Modal
+  if (showCalendar && selectedProject) {
+    return <CalendarModal project={selectedProject} />;
+  }
+
+  // Reminders Modal
+  if (showReminders && selectedProject) {
+    return <RemindersModal project={selectedProject} />;
   }
 
   // Completed Projects Tab
